@@ -40,14 +40,34 @@ def load_features(tag):
     return feat, out["AL"].values.astype(int)
 
 def fit_best(X, y):
-    """Refit the best model (RF per 08 default, or XGB if available)."""
-    if HAS_XGB:
+    """Refit the SAME learner that 08 reported as best (reviewer-consistency
+    fix: external validation must come from the one final model, not from a
+    different XGBoost/RF refit). Falls back to LASSO if the metadata is
+    missing."""
+    import json as _json
+    best_name = "LASSO"
+    try:
+        bp = os.path.join(cfg.PROC, "best_model_perf.json")
+        if os.path.exists(bp):
+            best_name = _json.load(open(bp)).get("best_model", "LASSO")
+    except Exception:
+        pass
+    if best_name == "XGBoost" and HAS_XGB:
         m = XGBClassifier(n_estimators=300, max_depth=3, learning_rate=0.05,
                           subsample=0.8, colsample_bytree=0.8, reg_lambda=1.0,
                           eval_metric="logloss", random_state=SEED, n_jobs=1, verbosity=0)
-    else:
+    elif best_name == "SVM":
+        m = Pipeline([("sc", StandardScaler()),
+                      ("clf", SVC(kernel="rbf", C=1.0, probability=True,
+                                  random_state=SEED, gamma="scale"))])
+    elif best_name == "RF":
         m = RandomForestClassifier(n_estimators=500, max_depth=5, min_samples_leaf=8,
                                    random_state=SEED, n_jobs=1)
+    else:
+        m = Pipeline([("sc", StandardScaler()),
+                      ("clf", LogisticRegression(penalty="l1", C=0.3, solver="liblinear",
+                                                 max_iter=5000, random_state=SEED))])
+    print(f"  external-validation learner: {best_name}")
     m.fit(X, y)
     return m
 
@@ -82,6 +102,16 @@ def calibration(y, p, bins=10):
                      "mean_predicted": float(p[m].mean()),
                      "observed_rate": float(y[m].mean())})
     return pd.DataFrame(rows)
+
+def hl_statistic(cal):
+    """Hosmer-Lemeshow chi2 from a decile calibration table."""
+    obs = cal.n * cal.observed_rate
+    exp = cal.n * cal.mean_predicted
+    denom = cal.n * cal.mean_predicted * (1 - cal.mean_predicted)
+    denom = denom.replace(0, np.nan)
+    hl = float(((obs - exp) ** 2 / denom).sum())
+    df_hl = max(len(cal) - 2, 1)
+    return hl, df_hl, float(chi2.sf(hl, df_hl))
 
 def main():
     print("=== 10 model validation ===")
@@ -141,14 +171,12 @@ def main():
     # Hosmer-Lemeshow: chi2 = sum over groups of (O_g - E_g)^2 /
     # (n_g * pbar_g * (1 - pbar_g)), where O_g is the number of OBSERVED
     # EVENTS in the group (n_g * observed rate), not the group size.
-    obs = cal.n * cal.observed_rate
-    exp = cal.n * cal.mean_predicted
-    denom = cal.n * cal.mean_predicted * (1 - cal.mean_predicted)
-    denom = denom.replace(0, np.nan)
-    hl = float(((obs - exp) ** 2 / denom).sum())
-    df_hl = max(len(cal) - 2, 1)
-    hl_p = float(chi2.sf(hl, df_hl))
+    hl, df_hl, hl_p = hl_statistic(cal)
     print(f"  Hosmer-Lemeshow chi2 = {hl:.2f} (df={df_hl}, p={hl_p:.3g})")
+    hl_v = df_v = hl_p_v = None
+    if p_v is not None:
+        hl_v, df_v, hl_p_v = hl_statistic(cal_v)
+        print(f"  validation Hosmer-Lemeshow chi2 = {hl_v:.2f} (df={df_v}, p={hl_p_v:.3g})")
 
     # ---- nomogram: logistic on 3 interpretable modality scores ----
     out_d = pd.read_csv(os.path.join(cfg.PROC, "discovery_al_outcome.tsv"), sep="\t", index_col=0)
@@ -193,17 +221,27 @@ def main():
           f"(cross-validated {auc_nm_cv:.3f})")
 
     # validation performance summary
+    import json as _json2
+    _best_name = "LASSO"
+    try:
+        _best_name = _json2.load(open(os.path.join(cfg.PROC, "best_model_perf.json"))).get("best_model", "LASSO")
+    except Exception:
+        pass
     summary = {
+        "external_validation_learner": _best_name,
         "discovery_OOF_AUC": round(float(roc_auc_score(y_d, p_d)), 3),
         "discovery_AUC_95CI": [round(float(ci[0]), 3), round(float(ci[1]), 3)],
         "discovery_Brier": round(float(brier_score_loss(y_d, p_d)), 4),
         "discovery_HL_chi2": round(float(hl), 2),
+        "discovery_HL_df": int(df_hl),
+        "discovery_HL_p": round(float(hl_p), 4),
         "validation_AUC": round(float(auc_v), 3) if auc_v else None,
         "validation_Brier": round(float(brier_score_loss(y_v, p_v)), 4) if p_v is not None else None,
+        "validation_HL_chi2": round(float(hl_v), 2) if hl_v is not None else None,
+        "validation_HL_df": int(df_v) if df_v is not None else None,
+        "validation_HL_p": round(float(hl_p_v), 4) if hl_p_v is not None else None,
         "nomogram_AUC_apparent": round(float(auc_nm), 3),
         "nomogram_AUC_cv": round(float(auc_nm_cv), 3),
-        "HL_chi2_p": round(float(hl_p), 4),
-        "HL_df": int(df_hl),
     }
     json.dump(summary, open(os.path.join(cfg.RESULTS, "validation_summary.json"), "w"), indent=2)
     print(json.dumps(summary, indent=2))

@@ -135,18 +135,40 @@ def main():
         json.dump({"meta_weights": weights}, open(os.path.join(cfg.RESULTS, "late_fusion_weights.json"), "w"), indent=2)
         print("  meta weights:", {k: round(v, 3) for k, v in weights.items()})
 
-    # ---------- Ablation: remove one modality at a time (early RF) ----------
-    print("  ablation (early fusion, RF):")
+    # ---------- Ablation: remove one modality at a time --------------------
+    # Reviewer-consistency fix: ablation uses the SAME learner that is reported
+    # as the best early-fusion model (read from 08's best_model_perf.json),
+    # so every reported number comes from one final model. RF ablation is kept
+    # as a sensitivity check in a separate column set.
+    import json as _json
+    best_learner = "LASSO"
+    try:
+        bp = os.path.join(cfg.PROC, "best_model_perf.json")
+        if os.path.exists(bp):
+            best_learner = _json.load(open(bp)).get("best_model", "LASSO")
+    except Exception:
+        pass
+    print(f"  ablation (early fusion, {best_learner}):")
     abl = []
     all_cols = mol_cols + clin_cols + icg_cols
-    base_m, _ = cv_auc(feat[all_cols].values.astype(float), y, base_learners()["RF"])
+    base_m, _ = cv_auc(feat[all_cols].values.astype(float), y, base_learners()[best_learner])
     abl.append({"removed": "none (full)", "CV_AUC": base_m[0], "delta_AUC": 0.0})
     for mod, cols in modalities.items():
         rem = [c for c in all_cols if c not in cols]
-        (m, s), _ = cv_auc(feat[rem].values.astype(float), y, base_learners()["RF"])
+        (m, s), _ = cv_auc(feat[rem].values.astype(float), y, base_learners()[best_learner])
         abl.append({"removed": mod, "CV_AUC": m, "delta_AUC": m - base_m[0]})
         print(f"    -{mod:10s} AUC={m:.3f} (delta {m-base_m[0]:+.3f})")
-    pd.DataFrame(abl).to_csv(os.path.join(cfg.RESULTS, "ablation.tsv"), sep="\t", index=False)
+    # sensitivity: RF-based ablation
+    base_rf, _ = cv_auc(feat[all_cols].values.astype(float), y, base_learners()["RF"])
+    rf_delta = {}
+    for mod, cols in modalities.items():
+        rem = [c for c in all_cols if c not in cols]
+        (m, s), _ = cv_auc(feat[rem].values.astype(float), y, base_learners()["RF"])
+        rf_delta[mod] = m - base_rf[0]
+    abl_df = pd.DataFrame(abl)
+    abl_df["delta_AUC_RF_sensitivity"] = [0.0] + [rf_delta[mod] for mod, _ in modalities.items()]
+    abl_df.to_csv(os.path.join(cfg.RESULTS, "ablation.tsv"), sep="\t", index=False)
+    _json.dump({"ablation_learner": best_learner}, open(os.path.join(cfg.RESULTS, "ablation_meta.json"), "w"))
 
     res = pd.DataFrame(results).sort_values("CV_AUC", ascending=False)
     res.to_csv(os.path.join(cfg.RESULTS, "fusion_performance.tsv"), sep="\t", index=False)

@@ -155,25 +155,35 @@ def main():
     best.fit(X_all, y)
     full_pred = best.predict_proba(X_all)[:, 1]
 
-    # SHAP on best model
+    # SHAP on the SAME best model that is reported (reviewer-consistency fix:
+    # no surrogate models). For LASSO this is exact linear SHAP on the fitted
+    # L1 logistic pipeline; for tree models TreeExplainer; SVM is the only
+    # case without a fast exact explainer (KernelExplainer would be required).
     shap_rows = None
     if HAS_SHAP:
         print("  computing SHAP values ...")
         try:
             if best_name in ("XGBoost", "RF"):
-                expl = shap.TreeExplainer(best if best_name == "XGBoost" else best)
+                expl = shap.TreeExplainer(best)
                 sv = expl.shap_values(X_all)
                 if isinstance(sv, list): sv = sv[1]
                 sv = np.asarray(sv)
                 if sv.ndim == 3:  # (n, features, classes) — new shap convention
                     sv = sv[:, :, 1]
+            elif best_name == "LASSO":
+                # exact linear SHAP from the fitted LASSO itself
+                sc = best.named_steps["sc"]; clf = best.named_steps["clf"]
+                Xs = sc.transform(X_all)
+                expl = shap.LinearExplainer(clf, Xs)
+                sv = np.asarray(expl.shap_values(Xs))
             else:
-                # pipeline: scaler + linear/SVM
-                Xs = StandardScaler().fit_transform(X_all)
-                inner = LogisticRegression(penalty="l2", max_iter=5000, random_state=SEED)
-                inner.fit(Xs, y)
-                expl = shap.LinearExplainer(inner, Xs)
-                sv = expl.shap_values(Xs)
+                # SVM: exact SHAP is quadratic; use the fitted SVM's decision
+                # function via KernelExplainer on a subsample background
+                rng = np.random.default_rng(SEED)
+                bg = X_all[rng.choice(len(X_all), size=min(100, len(X_all)), replace=False)]
+                f = lambda Z: best.predict_proba(Z)[:, 1]
+                expl = shap.KernelExplainer(f, bg)
+                sv = np.asarray(expl.shap_values(X_all, nsamples=200, silent=True))
             shap_df = pd.DataFrame(sv, columns=feat.columns)
             shap_df.insert(0, "sample", feat.index)
             shap_df.to_csv(os.path.join(cfg.RESULTS, "shap_values.tsv"), sep="\t", index=False)
@@ -184,6 +194,7 @@ def main():
             imp["modality"] = np.where(imp.feature.str.startswith("icg_"), "ICG",
                                 np.where(imp.feature.isin(["clin_risk_z"]), "Clinical", "Molecular"))
             imp.to_csv(os.path.join(cfg.RESULTS, "shap_importance.tsv"), sep="\t", index=False)
+            json.dump({"shap_model": best_name}, open(os.path.join(cfg.RESULTS, "shap_model.json"), "w"))
             print("  top 10 SHAP features:\n", imp.head(10).to_string(index=False))
             shap_rows = imp
         except Exception as e:

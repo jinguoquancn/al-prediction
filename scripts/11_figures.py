@@ -1,5 +1,11 @@
 """
-11_figures.py — Journal-quality composite figures (Fig 1-10).
+11_figures.py — Journal-quality composite figures (Fig 1-8).
+
+Revision after Reviewer 1 (Minor 1): former Figures 7+8 merged into the new
+Figure 7 (model performance / SHAP / modality contribution / ablation /
+fusion, six panels A-F), and former Figures 9+10 merged into the new
+Figure 8 (validation: ROC, DCA, calibration, nomogram, nomogram ROC,
+survival, six panels A-F). Eight single multi-panel images in total.
 
 Each figure is a SINGLE multi-panel image (panels labelled A, B, C, ...)
 saved as a 300-DPI LZW-compressed TIF and as an SVG, in figures/.
@@ -129,9 +135,9 @@ def save_composite(fig, n, dpi=300):
 def figure1():
     print("Figure 1: study design + AL signature")
     fig = plt.figure(figsize=(7.0, 7.2))
-    gs = GridSpec(2, 2, figure=fig, width_ratios=[2.2, 1.0],
-                  height_ratios=[1.0, 1.0], wspace=0.35, hspace=0.35,
-                  left=0.07, right=0.97, top=0.96, bottom=0.05)
+    gs = GridSpec(2, 2, figure=fig, width_ratios=[1.9, 1.1],
+                  height_ratios=[1.0, 1.0], wspace=0.30, hspace=0.35,
+                  left=0.06, right=0.98, top=0.96, bottom=0.05)
     axw = fig.add_subplot(gs[:, 0])
     # (A) workflow schematic
     steps = [
@@ -170,7 +176,8 @@ def figure1():
         axb.axvline(al.AL_sig_score.median(), color=R["black"], ls="--", lw=0.8)
     axb.set_xlabel("AL molecular signature score")
     axb.set_ylabel("Number of samples")
-    axb.legend(frameon=False, fontsize=6, loc="center left", bbox_to_anchor=(1.02, 0.5))
+    axb.legend(frameon=True, framealpha=0.85, edgecolor="#cccccc", fontsize=6,
+               loc="upper right", borderpad=0.4, labelspacing=0.3, handlelength=1.2)
     pl(axb, "B")
 
     # (C) signature gene heatmap
@@ -471,13 +478,20 @@ def figure6():
     names = {p[0]: p[1] for p in ICG_PARAMETERS}
     cols = list(icg.columns[:12])
     diffs = []
+    all_med = []
     for c in cols:
         v_leak = icg.loc[out.AL == 1, c].dropna().values
         v_no = icg.loc[out.AL == 0, c].dropna().values
         diffs.append(abs(np.median(v_leak) - np.median(v_no)) if (len(v_leak) and len(v_no)) else 0)
+        if len(v_leak) and len(v_no):
+            all_med += [float(np.median(v_leak)), float(np.median(v_no))]
     show = [cols[i] for i in np.argsort(diffs)[::-1]]
+    # Bracket height must scale with the AXIS range, not each parameter's own
+    # data range: near-zero parameters (Initial slope, Ingress/Egress rate,
+    # Perfusion decay) otherwise get a ~zero offset and the bracket sits ON
+    # the dots. ymaxall (global max median) also feeds set_ylim below.
+    ymaxall = max(all_med) if all_med else 1.0
     axa.grid(axis="y", ls=":", lw=0.4, color="#cccccc", zorder=0)
-    ymaxall = 0
     for i, c in enumerate(show):
         v_leak = icg.loc[out.AL == 1, c].dropna().values
         v_no = icg.loc[out.AL == 0, c].dropna().values
@@ -486,14 +500,12 @@ def figure6():
         axa.plot([i - 0.18, i + 0.18], [med_leak, med_no], color=R["grey"], lw=0.6, zorder=1)
         axa.plot(i - 0.18, med_leak, "o", ms=4, color=R["red"], zorder=2)
         axa.plot(i + 0.18, med_no, "o", ms=4, color=R["blue"], zorder=2)
-        ymaxall = max(ymaxall, med_leak, med_no)
         if len(v_leak) >= 3 and len(v_no) >= 3:
             try:
                 p = mannwhitneyu(v_leak, v_no).pvalue
-                rng = (np.nanmax(np.concatenate([v_leak, v_no]))
-                       - np.nanmin(np.concatenate([v_leak, v_no])))
-                sig_bracket(axa, i - 0.18, i + 0.18, max(med_leak, med_no) + 0.03 * rng, p,
-                            h=max(0.02, 0.035 * rng), fs=6)
+                sig_bracket(axa, i - 0.18, i + 0.18,
+                            max(med_leak, med_no) + 0.045 * ymaxall, p,
+                            h=0.035 * ymaxall, fs=6)
             except Exception:
                 pass
     # Single-line short labels: at 45 deg the perpendicular gap between adjacent
@@ -554,13 +566,17 @@ def figure6():
 
 # ============================================================ FIGURE 7
 def figure7():
-    print("Figure 7: AI model comparison + SHAP")
+    """Merged prediction figure: A ROC of the best multimodal model
+    (out-of-fold); B CV AUC by learner; C SHAP importance of the final model;
+    D modality contribution; E ablation AUC cost (final model + sensitivity);
+    F early versus late fusion."""
+    print("Figure 7: prediction, interpretability and fusion (merged)")
     if not exists(P("model_performance.tsv")):
         return
     perf = pd.read_csv(P("model_performance.tsv"), sep="\t")
-    fig = plt.figure(figsize=(7.2, 6.4))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.4, wspace=0.35,
-                  left=0.09, right=0.97, top=0.95, bottom=0.07)
+    fig = plt.figure(figsize=(11.0, 6.8))
+    gs = GridSpec(2, 3, figure=fig, hspace=0.42, wspace=0.42,
+                  left=0.07, right=0.98, top=0.95, bottom=0.07)
     # (A) ROC
     axa = fig.add_subplot(gs[0, 0])
     if exists(P("roc_data.tsv")):
@@ -573,7 +589,6 @@ def figure7():
         axa.set_xlabel("1 - Specificity"); axa.set_ylabel("Sensitivity")
         axa.legend(frameon=False, loc="lower right", fontsize=6)
     pl(axa, "A")
-
     # (B) AUC by modality x model
     axb = fig.add_subplot(gs[0, 1])
     mm = perf[perf.modality == "Multimodal (all)"]
@@ -588,24 +603,22 @@ def figure7():
     axb.set_ylabel("10-fold CV AUC"); axb.set_ylim(0.5, 1.0)
     axb.legend(frameon=False, fontsize=6)
     pl(axb, "B")
-
     # (C) SHAP summary
-    axc = fig.add_subplot(gs[1, 0])
+    axc = fig.add_subplot(gs[0, 2])
     if exists(P("shap_importance.tsv")):
-        imp = pd.read_csv(P("shap_importance.tsv"), sep="\t").head(15)
+        imp = pd.read_csv(P("shap_importance.tsv"), sep="\t").head(12)
         cmap = {"ICG": R["purple"], "Molecular": R["blue"], "Clinical": R["orange"]}
         axc.barh(range(len(imp))[::-1], imp.mean_abs_SHAP,
                  color=[cmap.get(m, R["grey"]) for m in imp.modality], height=0.6,
                  edgecolor="white", lw=0.2)
         axc.set_yticks(range(len(imp))[::-1])
-        axc.set_yticklabels([wrap(f.replace("icg_", ""), 22) for f in imp.feature], fontsize=6)
+        axc.set_yticklabels([wrap(f.replace("icg_", ""), 18) for f in imp.feature], fontsize=6)
         axc.set_xlabel("mean |SHAP|")
         handles = [plt.Rectangle((0, 0), 1, 1, color=v) for v in cmap.values()]
-        axc.legend(handles, cmap.keys(), frameon=False, fontsize=6)
+        axc.legend(handles, cmap.keys(), frameon=False, fontsize=6, loc="lower right")
     pl(axc, "C")
-
     # (D) modality contribution pie
-    axd = fig.add_subplot(gs[1, 1])
+    axd = fig.add_subplot(gs[1, 0])
     if exists(P("modality_contribution.tsv")):
         mc = pd.read_csv(P("modality_contribution.tsv"), sep="\t", index_col=0)
         axd.pie(mc.contribution_pct, labels=mc.index, colors=cfg.PIE_COLORS[:len(mc)],
@@ -613,65 +626,59 @@ def figure7():
                 wedgeprops=dict(lw=0.5, edgecolor="white"))
         axd.set_title("Modality contribution", fontsize=8)
     pl(axd, "D")
+    # (E) ablation: AUC cost of removing one modality (final LASSO model,
+    # with RF-based ablation as a sensitivity check)
+    axe = fig.add_subplot(gs[1, 1])
+    if exists(P("ablation.tsv")):
+        abl = pd.read_csv(P("ablation.tsv"), sep="\t")
+        labels = ["none", "-Molecular", "-Clinical", "-ICG"]
+        cost_main = (-abl.delta_AUC).values
+        cost_sens = (-abl.delta_AUC_RF_sensitivity).values if "delta_AUC_RF_sensitivity" in abl else np.zeros(len(abl))
+        x = np.arange(len(abl))
+        axe.bar(x - 0.18, cost_main, width=0.35, color=R["blue"], edgecolor="white", lw=0.2,
+                label="LASSO (final model)")
+        axe.bar(x + 0.18, cost_sens, width=0.35, color=R["yellow"], edgecolor="white", lw=0.2,
+                label="RF (sensitivity)")
+        for i, v in enumerate(cost_main):
+            # clamp negative-zero: the "none" arm is exactly -0.0 in
+            # ablation.tsv, and max(-0.0, 0.0) returns -0.0 (first arg on
+            # ties), so a strict comparison is required to print "0.000".
+            axe.text(i - 0.18, v + 0.0012, f"{(v if v > 0 else 0.0):.3f}",
+                     ha="center", fontsize=5.5)
+        axe.set_xticks(x); axe.set_xticklabels(labels, fontsize=6, rotation=15)
+        axe.set_ylabel("AUC lost vs full model")
+        axe.legend(frameon=False, fontsize=6)
+    pl(axe, "E")
+    # (F) early vs late fusion
+    axf = fig.add_subplot(gs[1, 2])
+    if exists(P("fusion_performance.tsv")):
+        fus = pd.read_csv(P("fusion_performance.tsv"), sep="\t")
+        short_learner = [r.learner for _, r in fus.iterrows()]
+        colors = [R["blue"] if "Early" in s else R["green"] for s in fus.strategy]
+        axf.bar(range(len(fus)), fus.CV_AUC, yerr=fus.CV_AUC_sd, color=colors, width=0.55,
+                edgecolor="white", lw=0.2, error_kw=dict(lw=0.6, capsize=2))
+        axf.set_xticks(range(len(fus))); axf.set_xticklabels(short_learner, fontsize=5.5, rotation=35, ha="right")
+        axf.set_ylabel("CV AUC")
+        from matplotlib.patches import Patch
+        axf.set_ylim(0.5, 1.03)
+        axf.legend(handles=[Patch(facecolor=R["blue"], label="Early fusion"),
+                            Patch(facecolor=R["green"], label="Late fusion (stacking)")],
+                   frameon=False, fontsize=6, loc="upper right")
+    pl(axf, "F")
     save_composite(fig, 7)
 
 # ============================================================ FIGURE 8
 def figure8():
-    print("Figure 8: fusion strategies")
-    if not exists(P("fusion_performance.tsv")):
-        return
-    fus = pd.read_csv(P("fusion_performance.tsv"), sep="\t")
-    fig = plt.figure(figsize=(7.6, 3.6))
-    gs = GridSpec(1, 3, figure=fig, width_ratios=[1.1, 1.0, 0.8],
-                  wspace=0.5, left=0.08, right=0.97, top=0.88, bottom=0.22)
-    # (A) early vs late
-    axa = fig.add_subplot(gs[0, 0])
-    short_learner = [r.learner for _, r in fus.iterrows()]
-    colors = [R["blue"] if "Early" in s else R["green"] for s in fus.strategy]
-    axa.bar(range(len(fus)), fus.CV_AUC, yerr=fus.CV_AUC_sd, color=colors, width=0.55,
-            edgecolor="white", lw=0.2, error_kw=dict(lw=0.6, capsize=2))
-    axa.set_xticks(range(len(fus))); axa.set_xticklabels(short_learner, fontsize=6, rotation=20, ha="right")
-    axa.set_ylabel("CV AUC"); axa.set_ylim(0.5, 1.0)
-    from matplotlib.patches import Patch
-    axa.set_ylim(0.5, 1.03)
-    axa.legend(handles=[Patch(facecolor=R["blue"], label="Early fusion"),
-                        Patch(facecolor=R["green"], label="Late fusion (stacking)")],
-               frameon=False, fontsize=6, loc="upper right")
-    pl(axa, "A")
-
-    # (B) ablation
-    axb = fig.add_subplot(gs[0, 1])
-    if exists(P("ablation.tsv")):
-        abl = pd.read_csv(P("ablation.tsv"), sep="\t")
-        colors = [R["green"] if r.removed == "none (full)" else R["orange"] for _, r in abl.iterrows()]
-        axb.bar(range(len(abl)), abl.CV_AUC, color=colors, width=0.55, edgecolor="white", lw=0.2)
-        axb.set_xticks(range(len(abl))); axb.set_xticklabels(abl.removed, fontsize=6, rotation=20)
-        axb.set_ylabel("CV AUC (RF)"); axb.set_ylim(0.5, 1.0)
-        for i, (_, r) in enumerate(abl.iterrows()):
-            axb.text(i, r.CV_AUC + 0.008, f"{r.CV_AUC:.3f}", ha="center", fontsize=6)
-    pl(axb, "B")
-
-    # (C) late fusion weights
-    axc = fig.add_subplot(gs[0, 2])
-    if exists(P("late_fusion_weights.json")):
-        w = json.load(open(P("late_fusion_weights.json")))["meta_weights"]
-        keys = list(w.keys()); vals = [w[k] for k in keys]
-        colors = [R["blue"] if v > 0 else R["red"] for v in vals]
-        axc.bar(range(len(keys)), vals, color=colors, width=0.5, edgecolor="white", lw=0.2)
-        axc.set_xticks(range(len(keys))); axc.set_xticklabels(keys, fontsize=6.5)
-        axc.axhline(0, color=R["black"], lw=0.6)
-        axc.set_ylabel("Meta-learner weight")
-    pl(axc, "C")
-    save_composite(fig, 8)
-
-# ============================================================ FIGURE 9
-def figure9():
-    print("Figure 9: validation & clinical utility")
+    """Merged validation/clinical-utility figure: A ROC discovery + validation;
+    B decision-curve analysis; C calibration; D nomogram; E nomogram ROC;
+    F Kaplan-Meier overall survival."""
+    print("Figure 8: validation, clinical utility and survival (merged)")
     if not exists(P("roc_data.tsv")):
         return
     roc = pd.read_csv(P("roc_data.tsv"), sep="\t")
-    fig = plt.figure(figsize=(7.6, 3.6))
-    gs = GridSpec(1, 3, figure=fig, wspace=0.45, left=0.08, right=0.97, top=0.9, bottom=0.14)
+    fig = plt.figure(figsize=(11.6, 7.6))
+    gs = GridSpec(2, 3, figure=fig, hspace=0.38, wspace=0.42,
+                  left=0.07, right=0.98, top=0.95, bottom=0.07)
     # (A) ROC
     axa = fig.add_subplot(gs[0, 0])
     colors = {"Discovery (OOF)": R["blue"], "Validation": R["green"]}
@@ -683,7 +690,6 @@ def figure9():
     axa.set_xlabel("1 - Specificity"); axa.set_ylabel("Sensitivity")
     axa.legend(frameon=False, loc="lower right", fontsize=6)
     pl(axa, "A")
-
     # (B) DCA
     axb = fig.add_subplot(gs[0, 1])
     if exists(P("dca_data.tsv")):
@@ -699,7 +705,6 @@ def figure9():
         axb.set_ylim(-0.05, max(0.12, dca.model_nb.max() * 1.15))
         axb.legend(frameon=False, fontsize=6)
     pl(axb, "B")
-
     # (C) calibration
     axc = fig.add_subplot(gs[0, 2])
     if exists(P("calibration_discovery.tsv")):
@@ -713,90 +718,73 @@ def figure9():
         axc.set_ylabel("Observed AL rate")
         axc.legend(frameon=False, fontsize=6)
     pl(axc, "C")
-    save_composite(fig, 9)
-
-# ============================================================ FIGURE 10
-def figure10():
-    """Figure 10 (combined): (a) nomogram, (b) nomogram ROC, (c) Kaplan-Meier
-    overall survival by AL molecular subtype. Three panels, evenly spaced."""
-    print("Figure 10: nomogram + ROC + survival (combined)")
-    if not exists(P("nomogram_model.json")):
-        return
-    nm = json.load(open(P("nomogram_model.json")))
-    coefs = nm["coefficients"]; b0 = nm["intercept"]
-    # Three evenly-distributed panels: nomogram (A), ROC (B), survival (C).
-    fig = plt.figure(figsize=(12.0, 4.3))
-    gs = GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 1],
-                  wspace=0.34, left=0.06, right=0.985, top=0.90, bottom=0.13)
-    # (A) nomogram -- clean axes with generous vertical spacing so the
-    # "Points" scale, the variable axes and the "Total points / risk" scale
-    # never overlap or look duplicated.
-    axa = fig.add_subplot(gs[0, 0])
-    total_c = sum(abs(v) for v in coefs.values())
-    axa.set_xlim(-0.05, 1.05); axa.set_ylim(-0.34, 1.62); axa.set_axis_off()
-    pt_ticks = [0, 20, 40, 60, 80, 100]
-    py = 1.42                                   # top "Points" scale
-    axa.plot([0, 1], [py, py], color=R["black"], lw=0.8)
-    for v in pt_ticks:
-        x = v / 100
-        axa.plot([x, x], [py, py - 0.025], color=R["black"], lw=0.6)
-        axa.text(x, py + 0.03, f"{v}", ha="center", fontsize=6.5)
-    axa.text(0.0, py + 0.10, "Points", fontsize=8, ha="left")
-    rows = list(coefs.items()); y_top, y_step = 1.05, 0.30
-    for i, (name, c) in enumerate(rows):
-        y = y_top - i * y_step
-        axa.text(0.0, y + 0.05, name, fontsize=8, ha="left")
-        x_full = abs(c) * 3 / total_c
-        if x_full > 1.0:
-            x_full = 1.0
-        axa.plot([0, x_full], [y, y], color=R["blue"], lw=1.0)
-        # tick marks only (no repeated |z| text) -> reads via the top Points scale
-        for zv in [0, 1, 2]:
-            xp = abs(c * zv) / total_c
-            if 0 <= xp <= 1:
-                axa.plot([xp, xp], [y, y - 0.022], color=R["black"], lw=0.5)
-    yt = y_top - (len(rows) - 1) * y_step - 0.30   # bottom "Total points" scale
-    axa.plot([0, 1], [yt, yt], color=R["black"], lw=0.8)
-    for v in pt_ticks:
-        x = v / 100
-        axa.plot([x, x], [yt, yt + 0.025], color=R["black"], lw=0.6)
-        axa.text(x, yt - 0.04, f"{v}", ha="center", fontsize=6.5)
-    axa.text(0.0, yt + 0.10, "Total points", fontsize=8, ha="left")
-    yr = yt - 0.28                               # "AL risk" probability axis
-    axa.text(0.0, yr + 0.06, "AL risk", fontsize=8, ha="left", color=R["red"])
-    for rp in [0.05, 0.10, 0.20, 0.40, 0.60]:
-        lp = np.log(rp / (1 - rp)) - b0
-        x = min(max(abs(lp) / total_c, 0.0), 1.0)
-        axa.plot([x, x], [yr, yr + 0.025], color=R["red"], lw=0.6)
-        axa.text(x, yr - 0.05, f"{rp*100:.0f}%", ha="center", fontsize=6.5, color=R["red"])
-    axa.set_title("Nomogram for anastomotic leakage risk", fontsize=9)
-    pl(axa, "A")
-
-    # (B) nomogram ROC
-    axb = fig.add_subplot(gs[0, 1])
-    out = pd.read_csv(PR("discovery_al_outcome.tsv"), sep="\t", index_col=0)
-    from sklearn.metrics import roc_curve
-    z = {k: (out["mol_z"] if k == "mol_z" else out["clin_z"] if k == "clin_z" else out["icg_risk_z"])
-         for k in coefs}
-    lp = sum(coefs[k] * v for k, v in z.items()) + b0
-    p = 1 / (1 + np.exp(-lp))
-    fpr, tpr, _ = roc_curve(out.AL, p)
-    axb.plot(fpr, tpr, color=R["orange"], lw=1.4, label=f"AUC={nm['nomogram_AUC']:.3f}")
-    axb.plot([0, 1], [0, 1], ls=":", color=R["grey"], lw=0.6)
-    axb.set_xlabel("1 - Specificity"); axb.set_ylabel("Sensitivity")
-    axb.set_xlim(0, 1); axb.set_ylim(0, 1.02)
-    axb.legend(frameon=False, fontsize=6, loc="lower right")
-    pl(axb, "B")
-
-    # (C) Kaplan-Meier overall survival by AL molecular subtype
-    axc = fig.add_subplot(gs[0, 2])
+    # (D) nomogram
+    axd = fig.add_subplot(gs[1, 0])
+    if exists(P("nomogram_model.json")):
+        nm = json.load(open(P("nomogram_model.json")))
+        coefs = nm["coefficients"]; b0 = nm["intercept"]
+        total_c = sum(abs(v) for v in coefs.values())
+        axd.set_xlim(-0.05, 1.05); axd.set_ylim(-0.34, 1.62); axd.set_axis_off()
+        pt_ticks = [0, 20, 40, 60, 80, 100]
+        py = 1.42
+        axd.plot([0, 1], [py, py], color=R["black"], lw=0.8)
+        for v in pt_ticks:
+            x = v / 100
+            axd.plot([x, x], [py, py - 0.025], color=R["black"], lw=0.6)
+            axd.text(x, py + 0.03, f"{v}", ha="center", fontsize=6.5)
+        axd.text(0.0, py + 0.10, "Points", fontsize=8, ha="left")
+        rows = list(coefs.items()); y_top, y_step = 1.05, 0.30
+        for i, (name, c) in enumerate(rows):
+            y = y_top - i * y_step
+            axd.text(0.0, y + 0.05, name, fontsize=8, ha="left")
+            x_full = min(abs(c) * 3 / total_c, 1.0)
+            axd.plot([0, x_full], [y, y], color=R["blue"], lw=1.0)
+            for zv in [0, 1, 2]:
+                xp = abs(c * zv) / total_c
+                if 0 <= xp <= 1:
+                    axd.plot([xp, xp], [y, y - 0.022], color=R["black"], lw=0.5)
+        yt = y_top - (len(rows) - 1) * y_step - 0.30
+        axd.plot([0, 1], [yt, yt], color=R["black"], lw=0.8)
+        for v in pt_ticks:
+            x = v / 100
+            axd.plot([x, x], [yt, yt + 0.025], color=R["black"], lw=0.6)
+            axd.text(x, yt - 0.04, f"{v}", ha="center", fontsize=6.5)
+        axd.text(0.0, yt + 0.10, "Total points", fontsize=8, ha="left")
+        yr = yt - 0.28
+        axd.text(0.0, yr + 0.06, "AL risk", fontsize=8, ha="left", color=R["red"])
+        for rp in [0.05, 0.10, 0.20, 0.40, 0.60]:
+            lp = np.log(rp / (1 - rp)) - b0
+            x = min(max(abs(lp) / total_c, 0.0), 1.0)
+            axd.plot([x, x], [yr, yr + 0.025], color=R["red"], lw=0.6)
+            axd.text(x, yr - 0.05, f"{rp*100:.0f}%", ha="center", fontsize=6.5, color=R["red"])
+        axd.set_title("Nomogram for anastomotic leakage risk", fontsize=8.5)
+    pl(axd, "D")
+    # (E) nomogram ROC
+    axe = fig.add_subplot(gs[1, 1])
+    if exists(P("nomogram_model.json")):
+        nm = json.load(open(P("nomogram_model.json")))
+        coefs = nm["coefficients"]; b0 = nm["intercept"]
+        out = pd.read_csv(PR("discovery_al_outcome.tsv"), sep="\t", index_col=0)
+        from sklearn.metrics import roc_curve
+        z = {k: (out["mol_z"] if k == "mol_z" else out["clin_z"] if k == "clin_z" else out["icg_risk_z"])
+             for k in coefs}
+        lp = sum(coefs[k] * v for k, v in z.items()) + b0
+        p = 1 / (1 + np.exp(-lp))
+        fpr, tpr, _ = roc_curve(out.AL, p)
+        axe.plot(fpr, tpr, color=R["orange"], lw=1.4, label=f"AUC={nm['nomogram_AUC']:.3f}")
+        axe.plot([0, 1], [0, 1], ls=":", color=R["grey"], lw=0.6)
+        axe.set_xlabel("1 - Specificity"); axe.set_ylabel("Sensitivity")
+        axe.set_xlim(0, 1); axe.set_ylim(0, 1.02)
+        axe.legend(frameon=False, fontsize=6, loc="lower right")
+    pl(axe, "E")
+    # (F) Kaplan-Meier overall survival by AL molecular subtype
+    axf = fig.add_subplot(gs[1, 2])
     try:
         from lifelines import KaplanMeierFitter
         from lifelines.statistics import logrank_test
-        from lifelines import CoxPHFitter
     except Exception as e:
-        print("  lifelines unavailable:", e); axc = None
-    if axc is not None:
+        print("  lifelines unavailable:", e)
+    else:
         al = pd.read_csv(PR("discovery_AL_score.tsv"), sep="\t", index_col=0)
         clin_path = PR("discovery_clinical.tsv")
         if not exists(clin_path):
@@ -830,69 +818,43 @@ def figure10():
                 m["stage_ord"] = np.nan
             m = m[(m["duration"] > 0)]
             groups = {"AL_low": R["blue"], "AL_high": R["red"]}
-            kmfit = {}; med = {}
             for g, c in groups.items():
                 sub = m[m.AL_group == g]
                 if len(sub) < 10:
                     continue
                 kmf = KaplanMeierFitter()
                 kmf.fit(sub["duration"], event_observed=sub["event"], label=g.replace("_", "-"))
-                kmf.plot_survival_function(ax=axc, color=c, lw=1.4, ci_show=True, alpha=0.12)
-                kmfit[g] = kmf
-                mv = kmf.median_survival_time_
-                med[g] = float(mv) if np.isfinite(mv) else None
+                kmf.plot_survival_function(ax=axf, color=c, lw=1.4, ci_show=True, alpha=0.12)
             low = m[m.AL_group == "AL_low"]; high = m[m.AL_group == "AL_high"]
             lr = logrank_test(low["duration"], high["duration"],
                               event_observed_A=low["event"], event_observed_B=high["event"])
             p_surv = float(lr.p_value)
-            axc.set_xlabel("Overall survival (months)")
-            axc.set_ylabel("Survival probability")
-            axc.set_ylim(0, 1.03); axc.set_xlim(0, max(120, m["duration"].max()))
-            axc.legend(frameon=False, fontsize=7, loc="upper right")
-            axc.text(0.5, 0.04, f"log-rank P = {p_surv:.1e}", transform=axc.transAxes,
+            axf.set_xlabel("Overall survival (months)")
+            axf.set_ylabel("Survival probability")
+            axf.set_ylim(0, 1.03); axf.set_xlim(0, max(120, m["duration"].max()))
+            axf.legend(frameon=False, fontsize=7, loc="upper right")
+            # journal style: avoid "5.4e-01" for ordinary p-values
+            _ptxt = f"{p_surv:.2f}" if p_surv >= 0.01 else f"{p_surv:.1e}"
+            axf.text(0.5, 0.04, f"log-rank P = {_ptxt}", transform=axf.transAxes,
                      ha="center", fontsize=7)
-            pl(axc, "C")
-            # Cox PH adjusted for age + stage
-            hr = hr_lo = hr_hi = hr_p = None
-            try:
-                cov = m.dropna(subset=["stage_ord"]).copy()
-                cov["AL_high"] = (cov["AL_group"] == "AL_high").astype(int)
-                cov = cov[["AL_high", "AGE", "stage_ord", "duration", "event"]].dropna()
-                if len(cov) > 20 and cov["AL_high"].nunique() == 2:
-                    cox = CoxPHFitter()
-                    cox.fit(cov, duration_col="duration", event_col="event")
-                    if "AL_high" in cox.summary.index:
-                        row = cox.summary.loc["AL_high"]
-                        hr = float(np.exp(row["coef"]))
-                        hr_lo = float(np.exp(row["coef lower 95%"]))
-                        hr_hi = float(np.exp(row["coef upper 95%"]))
-                        hr_p = float(row["p"])
-            except Exception as e:
-                print("  Cox failed:", e)
-            summary = {
-                "n_low": int((m.AL_group == "AL_low").sum()),
-                "n_high": int((m.AL_group == "AL_high").sum()),
-                "median_low": med.get("AL_low"),
-                "median_high": med.get("AL_high"),
-                "logrank_p": p_surv,
-                "hr": hr, "hr_ci_lower": hr_lo, "hr_ci_upper": hr_hi, "hr_p": hr_p,
-            }
-            try:
-                json.dump(summary, open(P("survival_summary.json"), "w"), indent=2, default=str)
-            except Exception:
-                pass
-            print("  survival summary:", summary)
-    save_composite(fig, 10)
+    pl(axf, "F")
+    save_composite(fig, 8)
 
-# NOTE: The Kaplan-Meier survival panel formerly drawn as Figure 11 has been
-# merged into Figure 10 (panel C) so Figures 10 and 11 are now a single,
-# evenly-distributed three-panel composite (A = nomogram, B = ROC, C = survival).
+
+# NOTE: Old Figures 7-10 were consolidated per Reviewer 1 (Minor 1):
+#   new Figure 7 = old Fig 7 (OOF ROC + learner bars) + old Fig 8 (SHAP +
+#                  modality pie + ablation + fusion), six panels A-F;
+#   new Figure 8 = old Fig 9 (external-validation ROC + DCA + calibration) +
+#                  old Fig 10 (nomogram + nomogram ROC + KM survival),
+#                  six panels A-F.
+# The former standalone Kaplan-Meier panel (old Figure 11) remains inside
+# Figure 8F.
 
 
 def main():
-    print("=== 11 figures (composite) ===")
+    print("=== 8 figures (composite) ===")
     for i, fn in enumerate([figure1, figure2, figure3, figure4, figure5,
-                            figure6, figure7, figure8, figure9, figure10],
+                            figure6, figure7, figure8],
                            start=1):
         try:
             fn()
