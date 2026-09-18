@@ -1,7 +1,7 @@
 Additional file 6: supplementary software
 ==========================================
 
-Contents: analysis source code for the study's computational pipeline (manuscript-assembly utilities are excluded to avoid pre-publication exposure of the draft text)
+Contents: analysis source code for the study's computational pipeline
 "Multi-modal feature fusion integrating standardized indocyanine green fluorescence parameters and molecular signatures for predicting anastomotic leakage after colorectal cancer surgery: a bioinformatics-driven virtual cohort study"
 
 Run order (each script reads the outputs of the previous ones):
